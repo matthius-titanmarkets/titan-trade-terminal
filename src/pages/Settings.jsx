@@ -67,7 +67,7 @@ export default function Settings() {
               />
             </div>
             <div>
-              <div className="text-sm text-ink">Finnhub API key <span className="text-2xs text-ink-dim">(free tier — enables live equities & full news wire)</span></div>
+              <div className="text-sm text-ink">Finnhub API key <span className="text-2xs text-ink-dim">(optional — highest-reliability US equities & full news wire)</span></div>
               <div className="flex gap-2 mt-2">
                 <input
                   className="input-dark font-mono text-xs"
@@ -78,7 +78,7 @@ export default function Settings() {
                 <button
                   onClick={() => {
                     refreshNow()
-                    flash('Feed re-synced with the new provider key.')
+                    flash('Feed re-synced.')
                   }}
                   className="btn-ghost px-4 text-xs shrink-0"
                 >
@@ -86,8 +86,33 @@ export default function Settings() {
                 </button>
               </div>
               <p className="text-2xs text-ink-dim mt-1.5 leading-relaxed">
-                Without a key: crypto is live via CoinGecko/Binance, FX uses daily reference rates, and equities/indices run on the labeled
-                Titan reference simulation. With a free key, equities and news go fully live.
+                Live by default, no key needed: crypto via CoinGecko/Binance, and indices, equities, FX, commodities &amp; futures via
+                Yahoo Finance. A free Finnhub key adds a higher-reliability real-time source for US equities and the full news wire.
+              </p>
+            </div>
+            <div>
+              <div className="text-sm text-ink">Live-data CORS proxy <span className="text-2xs text-ink-dim">(advanced — override the built-in proxy)</span></div>
+              <div className="flex gap-2 mt-2">
+                <input
+                  className="input-dark font-mono text-xs"
+                  placeholder="https://your-proxy/?url={url}"
+                  value={settings.corsProxy}
+                  onChange={(e) => updateSettings({ corsProxy: e.target.value.trim() })}
+                />
+                <button
+                  onClick={() => {
+                    refreshNow()
+                    flash('Live feed re-synced through the proxy.')
+                  }}
+                  className="btn-ghost px-4 text-xs shrink-0"
+                >
+                  Apply
+                </button>
+              </div>
+              <p className="text-2xs text-ink-dim mt-1.5 leading-relaxed">
+                Browsers can't call Yahoo Finance directly, so the app routes through public CORS proxies. If those are rate-limited,
+                host your own (e.g. a Cloudflare Worker) and paste its URL here — use <span className="font-mono">{'{url}'}</span> where the
+                encoded target goes. Leave blank to use the built-ins.
               </p>
             </div>
             <div className="flex items-center justify-between">

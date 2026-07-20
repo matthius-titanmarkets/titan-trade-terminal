@@ -28,11 +28,19 @@ The **Professional portal is a separate login**: it requires a firm-issued desk 
 
 Every instrument re-syncs on a fixed cadence (default **60 seconds**, configurable in Settings) and is honestly labeled by provenance:
 
-- **LIVE** — real prints: digital assets via CoinGecko (Binance fallback), equities/news via Finnhub when a key is set
-- **REF** — anchored to real reference data: FX from open.er-api.com daily rates
-- **SIM** — Titan reference simulation (deterministic random walk around institutional price anchors), used when no live source is reachable
+- **LIVE** — real market prints, no API key required:
+  - digital assets via CoinGecko (Binance fallback)
+  - **indices, equities, FX, commodities and futures via Yahoo Finance** (v8 chart) — routed through a CORS-proxy chain because browsers can't call Yahoo directly. Real price, open, high/low, volume and intraday history.
+- **REF** — anchored to real reference data: FX from open.er-api.com daily rates (baseline while Yahoo intraday loads)
+- **SIM** — Titan reference simulation (deterministic walk anchored to the last known live price), used only when a symbol can't be reached
 
-**To make equities, indices and the full news wire live:** create a free API key at [finnhub.io/register](https://finnhub.io/register) and paste it in **Settings → Market Data**. No rebuild needed.
+The ticker tape and watchlist are refreshed **every tick**; the remaining universe rotates through a polite fetch window so the public proxies aren't overloaded.
+
+**Optional upgrades (Settings → Market Data):**
+- **Finnhub key** ([finnhub.io/register](https://finnhub.io/register), free) — highest-reliability real-time US equities + the full live news wire.
+- **CORS proxy** — if the built-in public proxies get rate-limited, host your own (e.g. a Cloudflare Worker) and paste its URL using `{url}` as the encoded-target placeholder.
+
+> Live data works from the deployed site (your browser has direct internet). Behind some corporate networks or if all public proxies are down, symbols fall back to the labeled SIM feed — set your own CORS proxy to guarantee coverage.
 
 ## Google sign-in
 

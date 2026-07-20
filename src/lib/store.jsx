@@ -3,7 +3,7 @@ import React, { createContext, useContext, useEffect, useMemo, useState, useCall
 import { getSession, signOut as authSignOut, ensureSeedUsers } from './auth.js'
 import { seedTrades } from './trades.js'
 import { DEFAULT_WATCHLIST } from './universe.js'
-import { startEngine, configureEngine, subscribeMarket, forceTick } from './marketData.js'
+import { startEngine, configureEngine, subscribeMarket, forceTick, setPriority } from './marketData.js'
 
 const TRADES_KEY = 'titan.trades.v1'
 const SETTINGS_KEY = 'titan.settings.v1'
@@ -12,6 +12,7 @@ const WATCHLIST_KEY = 'titan.watchlist.v1'
 const DEFAULT_SETTINGS = {
   refreshSec: 60,
   finnhubKey: '',
+  corsProxy: '',
   compactMode: false,
   soundAlerts: false,
   defaultSymbol: 'SPX',
@@ -45,14 +46,18 @@ export function StoreProvider({ children }) {
   // market engine lifecycle — runs while authenticated
   useEffect(() => {
     if (!session) return
-    startEngine({ refresh: settings.refreshSec * 1000, key: settings.finnhubKey })
+    setPriority(watchlist)
+    startEngine({ refresh: settings.refreshSec * 1000, key: settings.finnhubKey, proxy: settings.corsProxy })
     const un = subscribeMarket(() => setMarketRev((r) => r + 1))
     return un
   }, [session])
 
   useEffect(() => {
-    configureEngine({ refresh: settings.refreshSec * 1000, key: settings.finnhubKey })
-  }, [settings.refreshSec, settings.finnhubKey])
+    configureEngine({ refresh: settings.refreshSec * 1000, key: settings.finnhubKey, proxy: settings.corsProxy })
+  }, [settings.refreshSec, settings.finnhubKey, settings.corsProxy])
+
+  // keep the live engine prioritising whatever is on the watchlist
+  useEffect(() => setPriority(watchlist), [watchlist])
 
   useEffect(() => localStorage.setItem(TRADES_KEY, JSON.stringify(trades)), [trades])
   useEffect(() => localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)), [settings])

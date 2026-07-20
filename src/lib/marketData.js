@@ -1,11 +1,15 @@
 // Titan market data engine.
 //
 // Sources, in order of preference per asset class:
-//   crypto  → CoinGecko simple/price (no key, CORS) with Binance 24h fallback
-//   fx      → open.er-api.com daily reference rates (no key, CORS)
-//   equity/index → Finnhub real-time quotes when the user supplies a free API
-//              key in Settings; otherwise the Titan reference-simulation feed
-//   commodity/future → reference simulation anchored to institutional levels
+//   crypto        → CoinGecko simple/price (no key, CORS) + Binance 24h fallback
+//   everything    → Yahoo Finance v8 chart (no key) via a CORS-proxy chain —
+//     else          real intraday price / open / high / low / volume + history
+//                   for indices, equities, FX, commodities AND futures
+//   equity/index  → Finnhub real-time quotes when the user adds a free API key
+//                   (higher-reliability override for US equities + news)
+//   fx            → open.er-api.com daily reference rates (baseline fallback)
+//   anything not reachable → Titan reference simulation, anchored to the last
+//                   known live price and clearly labelled SIM in the UI.
 //
 // Every symbol carries `source`: 'live' | 'ref' | 'sim' so the UI can label
 // data provenance honestly. The engine ticks on a configurable interval
@@ -14,6 +18,36 @@
 import { UNIVERSE, bySymbol, CLASS_VOL } from './universe.js'
 
 const HISTORY_LEN = 240 // intraday points kept per symbol
+
+// ── Yahoo Finance symbol mapping (covers the full universe, no API key) ──
+const YAHOO_OVERRIDE = {
+  SPX: '^GSPC', NDX: '^NDX', DJI: '^DJI', RUT: '^RUT', VIX: '^VIX',
+  FTSE: '^FTSE', DAX: '^GDAXI', N225: '^N225',
+  'BRK.B': 'BRK-B',
+  XAUUSD: 'GC=F', XAGUSD: 'SI=F', WTI: 'CL=F', BRENT: 'BZ=F', NATGAS: 'NG=F', COPPER: 'HG=F',
+  ES: 'ES=F', NQ: 'NQ=F', YM: 'YM=F', RTY: 'RTY=F', CL: 'CL=F', GC: 'GC=F', ZB: 'ZB=F', '6E': '6E=F',
+}
+function yahooSymbol(def) {
+  if (YAHOO_OVERRIDE[def.symbol]) return YAHOO_OVERRIDE[def.symbol]
+  if (def.cls === 'fx') return `${def.symbol}=X`
+  if (def.cls === 'crypto') return `${def.symbol.replace('USD', '')}-USD`
+  return def.symbol // equities map 1:1
+}
+
+// CORS proxies tried in order (browsers can't hit Yahoo directly — no CORS
+// headers). A user-supplied proxy from Settings is tried first, then a direct
+// attempt (works from some environments / extensions) as a last resort.
+const CORS_PROXIES = [
+  (u) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
+  (u) => `https://corsproxy.io/?url=${encodeURIComponent(u)}`,
+  (u) => `https://thingproxy.freeboard.io/fetch/${u}`,
+]
+// Symbols always refreshed every tick (ticker tape + headline board); the rest
+// rotate through a window so we stay polite to the public proxies.
+const ALWAYS_PRIORITY = [
+  'SPX', 'NDX', 'DJI', 'RUT', 'VIX', 'ES', 'NQ', 'AAPL', 'NVDA', 'MSFT', 'TSLA',
+  'EURUSD', 'GBPUSD', 'USDJPY', 'BTCUSD', 'ETHUSD', 'XAUUSD', 'WTI', 'DAX', 'N225',
+]
 
 // ── deterministic PRNG so the sim is stable across reloads on the same day ──
 function mulberry32(seed) {
@@ -47,6 +81,9 @@ const listeners = new Set()
 let timer = null
 let refreshMs = 60_000
 let finnhubKey = ''
+let corsProxy = '' // optional user CORS proxy template (contains {url})
+let extraPriority = [] // watchlist symbols to also refresh every tick
+let rotateOffset = 0 // rotates the non-priority live-fetch window each tick
 let lastSync = null
 let liveCounts = { live: 0, ref: 0, sim: 0 }
 
@@ -203,6 +240,60 @@ async function pullFx() {
   }
 }
 
+// ── Yahoo Finance universal adapter ──
+async function fetchYahoo(ysym) {
+  const target = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(
+    ysym
+  )}?range=1d&interval=5m&includePrePost=false`
+  const chain = []
+  if (corsProxy) chain.push((u) => corsProxy.replace('{url}', encodeURIComponent(u)))
+  chain.push(...CORS_PROXIES, (u) => u) // built-in proxies, then a direct attempt
+  for (const wrap of chain) {
+    try {
+      const j = await fetchJson(wrap(target), {}, 8000)
+      const r = j?.chart?.result?.[0]
+      if (r?.meta?.regularMarketPrice != null) return r
+    } catch {
+      /* try next proxy */
+    }
+  }
+  return null
+}
+
+function applyYahoo(q, r) {
+  const m = r.meta
+  const px = m.regularMarketPrice
+  if (!(px > 0)) return
+  q._anchor = px
+  if (m.regularMarketDayHigh != null) q.dayHigh = m.regularMarketDayHigh
+  if (m.regularMarketDayLow != null) q.dayLow = m.regularMarketDayLow
+  if (m.chartPreviousClose != null) q.prevClose = m.chartPreviousClose
+  if (m.regularMarketVolume != null) q.volume = m.regularMarketVolume
+  const closes = (r.indicators?.quote?.[0]?.close || []).filter((x) => x != null)
+  if (m.regularMarketOpen != null) q.open = m.regularMarketOpen
+  else if (closes.length) q.open = closes[0]
+  if (closes.length > 2) q.history = closes.slice(-HISTORY_LEN)
+  pushPrice(q, px, 'live')
+}
+
+async function pullYahoo(defs) {
+  let hit = false
+  const CONC = 6
+  for (let i = 0; i < defs.length; i += CONC) {
+    const slice = defs.slice(i, i + CONC)
+    const results = await Promise.all(
+      slice.map(async (def) => {
+        const r = await fetchYahoo(yahooSymbol(def))
+        if (!r) return false
+        applyYahoo(quotes.get(def.symbol), r)
+        return true
+      })
+    )
+    if (results.some(Boolean)) hit = true
+  }
+  return hit
+}
+
 async function pullFinnhub() {
   if (!finnhubKey) return false
   // full equity universe each tick: 20 quote calls/min, inside the free
@@ -233,9 +324,26 @@ async function pullFinnhub() {
 }
 
 async function tick() {
-  const [cryptoOk] = await Promise.all([pullCrypto(), pullFx(), pullFinnhub()])
-  void cryptoOk
-  // sim-step everything that did not just get a live print this tick
+  // 1) crypto — most reliable no-key live feed (CoinGecko → Binance)
+  await pullCrypto().catch(() => {})
+  // 2) FX daily reference as a baseline (Yahoo intraday overrides below)
+  await pullFx().catch(() => {})
+  // 3) Yahoo — real intraday for indices, equities, FX, commodities, futures.
+  //    Priority symbols (tape + watchlist) every tick; the rest rotate.
+  const prio = new Set([...ALWAYS_PRIORITY, ...extraPriority])
+  const nonCrypto = UNIVERSE.filter((d) => d.cls !== 'crypto')
+  const priorityDefs = nonCrypto.filter((d) => prio.has(d.symbol))
+  const restDefs = nonCrypto.filter((d) => !prio.has(d.symbol))
+  const WINDOW = 14
+  const pages = Math.max(1, Math.ceil(restDefs.length / WINDOW))
+  const start = (rotateOffset % pages) * WINDOW
+  rotateOffset++
+  const restSlice = restDefs.slice(start, start + WINDOW)
+  await pullYahoo([...priorityDefs, ...restSlice]).catch(() => {})
+  // 4) Finnhub override for US equities when a key is configured
+  if (finnhubKey) await pullFinnhub().catch(() => {})
+
+  // sim-step everything that did not just get a fresh print this tick
   const now = Date.now()
   for (const q of quotes.values()) {
     if (now - q.ts > 5000) simStep(q)
@@ -260,8 +368,9 @@ export function startEngine(opts = {}) {
   }
 }
 
-export function configureEngine({ refresh, key } = {}) {
+export function configureEngine({ refresh, key, proxy } = {}) {
   if (key !== undefined) finnhubKey = key
+  if (proxy !== undefined) corsProxy = proxy
   if (refresh && refresh !== refreshMs) {
     refreshMs = refresh
     if (timer) {
@@ -269,6 +378,11 @@ export function configureEngine({ refresh, key } = {}) {
       timer = setInterval(tick, refreshMs)
     }
   }
+}
+
+// symbols the UI wants refreshed every tick (e.g. the current watchlist)
+export function setPriority(symbols) {
+  extraPriority = Array.isArray(symbols) ? symbols : []
 }
 
 export function subscribeMarket(cb) {
