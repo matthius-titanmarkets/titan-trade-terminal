@@ -1,0 +1,32 @@
+{
+  "name": "titan-trade-terminal",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Titan Markets LLC — institutional-grade trading dashboard and terminal for professional and retail traders",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@fontsource/ibm-plex-mono": "^5.0.13",
+    "@fontsource/inter": "^5.0.18",
+    "@fontsource/playfair-display": "^5.0.20",
+    "framer-motion": "^11.2.10",
+    "lightweight-charts": "^4.2.0",
+    "papaparse": "^5.4.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.24.0",
+    "recharts": "^2.12.7"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.1",
+    "autoprefixer": "^10.4.19",
+    "playwright-core": "^1.61.1",
+    "postcss": "^8.4.38",
+    "tailwindcss": "^3.4.4",
+    "vite": "^5.3.1"
+  }
+}

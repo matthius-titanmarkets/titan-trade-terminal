@@ -1,0 +1,181 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── Titan Markets typographic system ─────────────────────────────────────
+   Brand serif  : Playfair Display — headlines, wordmark, hero numerals
+   Working sans : Inter — interface, body, labels
+   Data mono    : IBM Plex Mono — prices, tickers, blotter, terminal        */
+
+:root {
+  --tt-bg: #05070d;
+  --tt-panel: #0a0e17;
+  --tt-gold: #c9a43a;
+  color-scheme: dark;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  @apply bg-obsidian-900 text-ink font-sans antialiased;
+  font-feature-settings: 'cv02', 'cv03', 'cv04', 'ss01';
+  text-rendering: optimizeLegibility;
+  overscroll-behavior-y: none;
+}
+
+/* numerals in data contexts align in columns */
+.tabular,
+.font-mono {
+  font-variant-numeric: tabular-nums;
+}
+
+::selection {
+  background: rgba(201, 164, 58, 0.35);
+  color: #fff;
+}
+
+/* ── scrollbars ── */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #1a2338 transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: #1a2338;
+  border-radius: 8px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: #233049;
+}
+
+/* ── shared primitives ── */
+@layer components {
+  .panel {
+    @apply bg-obsidian-800 border border-line rounded-xl shadow-panel;
+  }
+  .panel-raised {
+    @apply bg-obsidian-700 border border-line-strong rounded-xl shadow-panel;
+  }
+  .label-caps {
+    @apply text-3xs font-semibold uppercase tracking-caps text-ink-dim;
+  }
+  .gold-text {
+    @apply text-titan-gold;
+  }
+  .btn-gold {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg bg-titan-gold text-obsidian-950 font-semibold
+      hover:bg-titan-bright active:scale-[0.985] transition-all duration-150 disabled:opacity-40 disabled:pointer-events-none;
+  }
+  .btn-ghost {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg border border-line-strong text-ink-soft
+      hover:text-ink hover:border-titan-gold/50 hover:bg-titan-faint active:scale-[0.985] transition-all duration-150;
+  }
+  .input-dark {
+    @apply w-full rounded-lg bg-obsidian-850 border border-line-strong px-3.5 py-2.5 text-sm text-ink placeholder:text-ink-faint
+      focus:outline-none focus:border-titan-gold/60 focus:ring-2 focus:ring-titan-gold/15 transition-all duration-150;
+  }
+  .th-cell {
+    @apply text-3xs font-semibold uppercase tracking-caps text-ink-dim py-2.5 px-3 text-left whitespace-nowrap;
+  }
+  .td-cell {
+    @apply py-2.5 px-3 text-sm whitespace-nowrap;
+  }
+}
+
+/* hairline gold divider used across brand surfaces */
+.gold-rule {
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(201, 164, 58, 0.55), transparent);
+}
+
+/* subtle grid backdrop for terminal surfaces */
+.grid-backdrop {
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.018) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.018) 1px, transparent 1px);
+  background-size: 44px 44px;
+}
+
+/* login backdrop: radial vignette + grid */
+.auth-backdrop {
+  background:
+    radial-gradient(1100px 520px at 78% -10%, rgba(201, 164, 58, 0.10), transparent 60%),
+    radial-gradient(900px 500px at 12% 110%, rgba(76, 126, 243, 0.06), transparent 55%),
+    #04060b;
+}
+
+/* ticker tape fade edges */
+.tape-mask {
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 3%, #000 97%, transparent);
+  mask-image: linear-gradient(90deg, transparent, #000 3%, #000 97%, transparent);
+}
+
+/* number flash on tick */
+.flash-up {
+  animation: flashUp 0.9s ease-out;
+}
+.flash-down {
+  animation: flashDown 0.9s ease-out;
+}
+@keyframes flashUp {
+  0% { background-color: rgba(25, 199, 132, 0.28); }
+  100% { background-color: transparent; }
+}
+@keyframes flashDown {
+  0% { background-color: rgba(239, 67, 83, 0.28); }
+  100% { background-color: transparent; }
+}
+
+/* loading shimmer */
+.shimmer {
+  background: linear-gradient(90deg, #0a0e17 25%, #101625 37%, #0a0e17 63%);
+  background-size: 400px 100%;
+  animation: shimmer 1.4s ease infinite;
+}
+@keyframes shimmer {
+  0% { background-position: -400px 0; }
+  100% { background-position: 400px 0; }
+}
+
+/* recharts dark restyle */
+.recharts-cartesian-axis-tick text {
+  fill: #6b7689;
+  font-size: 10px;
+  font-family: 'IBM Plex Mono', monospace;
+}
+.recharts-cartesian-grid line {
+  stroke: #11182755;
+}
+.recharts-default-tooltip {
+  background: #0c111d !important;
+  border: 1px solid #233049 !important;
+  border-radius: 10px !important;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 12px;
+}
+
+/* safe-area padding for mobile bottom nav */
+.pb-safe {
+  padding-bottom: calc(0.5rem + env(safe-area-inset-bottom));
+}
+
+@media (max-width: 768px) {
+  .mobile-scroll-x {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+}
