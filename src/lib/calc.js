@@ -146,3 +146,66 @@ export function correlation(seriesA, seriesB) {
 
 const returns = (xs) => xs.slice(1).map((v, i) => (v - xs[i]) / xs[i])
 const avg = (xs) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0)
+
+// ── additional performance-chart series ──
+
+// cumulative P&L trade-by-trade (chronological), for the growth curve
+export function cumulativeByTrade(trades) {
+  const closed = closedTrades(trades)
+    .slice()
+    .sort((a, b) => a.date.localeCompare(b.date) || String(a.id).localeCompare(String(b.id)))
+  let cum = 0
+  return closed.map((t, i) => {
+    const pnl = tradePnl(t)
+    cum += pnl
+    return { n: i + 1, date: t.date, symbol: t.symbol, pnl, cum }
+  })
+}
+
+// histogram of trade P&L into N buckets spanning worst→best
+export function pnlDistribution(trades, buckets = 9) {
+  const pnls = closedTrades(trades).map((t) => tradePnl(t))
+  if (pnls.length === 0) return []
+  const min = Math.min(...pnls)
+  const max = Math.max(...pnls)
+  const span = max - min || 1
+  const size = span / buckets
+  const bins = Array.from({ length: buckets }, (_, i) => ({
+    lo: min + i * size,
+    hi: min + (i + 1) * size,
+    mid: min + (i + 0.5) * size,
+    count: 0,
+  }))
+  for (const p of pnls) {
+    const idx = Math.min(buckets - 1, Math.max(0, Math.floor((p - min) / size)))
+    bins[idx].count += 1
+  }
+  return bins.map((b) => ({ mid: b.mid, count: b.count, win: b.mid >= 0 }))
+}
+
+// long vs short book performance
+export function longShortStats(trades) {
+  const closed = closedTrades(trades)
+  const mk = (side) => {
+    const rows = closed.filter((t) => t.side === side)
+    const pnls = rows.map((t) => tradePnl(t))
+    const wins = pnls.filter((p) => p > 0).length
+    const net = pnls.reduce((a, b) => a + b, 0)
+    return { side, count: rows.length, net, winRate: rows.length ? (wins / rows.length) * 100 : 0 }
+  }
+  return [mk('long'), mk('short')]
+}
+
+// rolling win rate over a trailing window (chronological)
+export function rollingWinRate(trades, window = 10) {
+  const closed = closedTrades(trades)
+    .slice()
+    .sort((a, b) => a.date.localeCompare(b.date) || String(a.id).localeCompare(String(b.id)))
+  const outcomes = closed.map((t) => (tradePnl(t) > 0 ? 1 : 0))
+  return closed.map((t, i) => {
+    const from = Math.max(0, i - window + 1)
+    const slice = outcomes.slice(from, i + 1)
+    const wr = slice.length ? (slice.reduce((a, b) => a + b, 0) / slice.length) * 100 : 0
+    return { n: i + 1, winRate: wr }
+  })
+}

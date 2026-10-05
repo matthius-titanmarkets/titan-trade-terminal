@@ -30,7 +30,23 @@ export default function Trades() {
   const [form, setForm] = useState(EMPTY_FORM)
   const [importReport, setImportReport] = useState(null)
   const [confirmDelete, setConfirmDelete] = useState(null)
+  const [closing, setClosing] = useState(null) // open trade being closed
+  const [closePrice, setClosePrice] = useState('')
   const fileRef = useRef(null)
+
+  const openClose = (t) => {
+    const q = getQuote(t.symbol)
+    const mkt = q?.price ?? t.entry
+    const digits = q?.digits ?? 2
+    setClosePrice(String(Number(mkt.toFixed(digits))))
+    setClosing(t)
+  }
+  const confirmClose = () => {
+    const exit = parseFloat(closePrice)
+    if (!Number.isFinite(exit)) return
+    updateTrade(closing.id, { status: 'closed', exit })
+    setClosing(null)
+  }
 
   const rows = useMemo(() => {
     let r = [...trades]
@@ -208,6 +224,9 @@ export default function Trades() {
                           <Tag tone={t.status === 'open' ? 'gold' : 'default'}>{t.status.toUpperCase()}</Tag>
                         </td>
                         <td className="td-cell text-right whitespace-nowrap">
+                          {t.status === 'open' && (
+                            <button onClick={() => openClose(t)} className="text-2xs text-titan-gold hover:text-titan-bright px-1.5 transition-colors font-medium">Close</button>
+                          )}
                           <button onClick={() => openEditor(t)} className="text-2xs text-ink-dim hover:text-titan-bright px-1.5 transition-colors">Edit</button>
                           <button onClick={() => setConfirmDelete(t)} className="text-2xs text-ink-dim hover:text-market-down px-1.5 transition-colors">Delete</button>
                         </td>
@@ -327,6 +346,54 @@ export default function Trades() {
             Delete
           </button>
         </div>
+      </Modal>
+
+      {/* ── close position ── */}
+      <Modal open={!!closing} onClose={() => setClosing(null)} title={`Close ${closing?.symbol ?? ''}`}>
+        {closing && (
+          <div className="space-y-4">
+            <div className="grid grid-cols-3 gap-3 text-center">
+              <div className="panel p-3">
+                <div className="label-caps">Side</div>
+                <div className="mt-1"><Tag tone={closing.side === 'long' ? 'up' : 'down'}>{closing.side.toUpperCase()}</Tag></div>
+              </div>
+              <div className="panel p-3">
+                <div className="label-caps">Qty</div>
+                <div className="font-mono tabular text-ink mt-1">{closing.qty.toLocaleString()}</div>
+              </div>
+              <div className="panel p-3">
+                <div className="label-caps">Entry</div>
+                <div className="font-mono tabular text-ink mt-1">{fmtPrice(closing.entry)}</div>
+              </div>
+            </div>
+            <label className="block">
+              <span className="label-caps mb-1.5 block">Close price (defaults to live market)</span>
+              <input
+                type="number"
+                step="any"
+                autoFocus
+                className="input-dark font-mono"
+                value={closePrice}
+                onChange={(e) => setClosePrice(e.target.value)}
+              />
+            </label>
+            <div className="flex items-center justify-between rounded-lg border border-line-strong bg-obsidian-850 px-4 py-3">
+              <span className="text-sm text-ink-soft">Realized P&L on close</span>
+              <span
+                className={classNames(
+                  'font-mono tabular text-lg font-semibold',
+                  upDownClass(tradePnl({ ...closing, status: 'closed', exit: parseFloat(closePrice) || closing.entry }))
+                )}
+              >
+                {fmtSignedMoney(tradePnl({ ...closing, status: 'closed', exit: parseFloat(closePrice) || closing.entry }), 0)}
+              </span>
+            </div>
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setClosing(null)} className="btn-ghost px-4 py-2 text-sm">Cancel</button>
+              <button onClick={confirmClose} className="btn-gold px-5 py-2 text-sm">Close position</button>
+            </div>
+          </div>
+        )}
       </Modal>
     </div>
   )

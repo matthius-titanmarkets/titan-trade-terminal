@@ -3,13 +3,16 @@
 import React, { useMemo } from 'react'
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, ReferenceLine,
-  AreaChart, Area,
+  AreaChart, Area, LineChart, Line,
 } from 'recharts'
 import Reveal, { RevealStagger } from '../components/Reveal.jsx'
-import { Panel, PanelHeader, Stat, EmptyState, classNames } from '../components/ui.jsx'
+import { Panel, PanelHeader, Stat, Tag, GoldDivider, EmptyState, classNames } from '../components/ui.jsx'
 import { useStore } from '../lib/store.jsx'
-import { computeStats, monthlyPnl, byStrategy, byAssetClass, dayOfWeekPnl } from '../lib/calc.js'
-import { fmtMoney, fmtSignedMoney, upDownClass } from '../lib/format.js'
+import {
+  computeStats, monthlyPnl, byStrategy, byAssetClass, dayOfWeekPnl,
+  cumulativeByTrade, pnlDistribution, longShortStats, rollingWinRate,
+} from '../lib/calc.js'
+import { fmtMoney, fmtSignedMoney, fmtCompact, fmtPct, upDownClass } from '../lib/format.js'
 
 export default function Analytics() {
   const { trades } = useStore()
@@ -18,6 +21,10 @@ export default function Analytics() {
   const strategies = useMemo(() => byStrategy(trades), [trades])
   const classes = useMemo(() => byAssetClass(trades), [trades])
   const dow = useMemo(() => dayOfWeekPnl(trades), [trades])
+  const cumTrades = useMemo(() => cumulativeByTrade(trades), [trades])
+  const dist = useMemo(() => pnlDistribution(trades), [trades])
+  const ls = useMemo(() => longShortStats(trades), [trades])
+  const rollWR = useMemo(() => rollingWinRate(trades, 10), [trades])
 
   // drawdown series from equity curve
   const ddSeries = useMemo(() => {
@@ -56,6 +63,114 @@ export default function Analytics() {
         <MetricCard label="Avg Win / Loss" value={stats.payoff.toFixed(2)} sub={`${fmtMoney(stats.avgWin, 0)} / ${fmtMoney(stats.avgLoss, 0)}`} />
         <MetricCard label="Streaks" value={`${stats.bestStreak}W / ${stats.worstStreak}L`} sub="best / worst" />
       </RevealStagger>
+
+      {/* ── performance curves ── */}
+      <div className="grid lg:grid-cols-3 gap-4">
+        <Reveal className="lg:col-span-2">
+          <Panel>
+            <PanelHeader
+              title="Cumulative P&L Curve"
+              hint="Realized growth, trade by trade"
+              right={<Tag tone={stats.net >= 0 ? 'up' : 'down'}>{fmtSignedMoney(stats.net, 0)}</Tag>}
+            />
+            <div className="h-64 px-2 py-3">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={cumTrades} margin={{ top: 6, right: 12, bottom: 0, left: 4 }}>
+                  <defs>
+                    <linearGradient id="cumGold" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#C9A43A" stopOpacity={0.35} />
+                      <stop offset="100%" stopColor="#C9A43A" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <XAxis dataKey="n" tickLine={false} axisLine={false} minTickGap={28} tickFormatter={(v) => `#${v}`} />
+                  <YAxis tickLine={false} axisLine={false} width={56} tickFormatter={(v) => fmtMoney(v, 0)} />
+                  <Tooltip
+                    formatter={(v) => fmtSignedMoney(v, 0)}
+                    labelFormatter={(v) => `Trade #${v}`}
+                    cursor={{ stroke: '#233049' }}
+                  />
+                  <ReferenceLine y={0} stroke="#233049" />
+                  <Area type="monotone" dataKey="cum" stroke="#C9A43A" strokeWidth={1.8} fill="url(#cumGold)" />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          </Panel>
+        </Reveal>
+
+        <Reveal delay={0.06}>
+          <Panel className="h-full">
+            <PanelHeader title="Long vs Short" hint="Book split by direction" />
+            <div className="p-4 space-y-3">
+              {ls.map((row) => (
+                <div key={row.side} className="panel-raised p-3">
+                  <div className="flex items-center justify-between">
+                    <Tag tone={row.side === 'long' ? 'up' : 'down'}>{row.side.toUpperCase()}</Tag>
+                    <span className={classNames('font-mono tabular text-sm font-semibold', upDownClass(row.net))}>
+                      {fmtSignedMoney(row.net, 0)}
+                    </span>
+                  </div>
+                  <div className="flex justify-between mt-2 text-2xs text-ink-dim font-mono">
+                    <span>{row.count} trades</span>
+                    <span>{row.winRate.toFixed(0)}% win</span>
+                  </div>
+                  <div className="h-1.5 rounded-full bg-obsidian-600 overflow-hidden mt-2">
+                    <div
+                      className={classNames('h-full rounded-full', row.side === 'long' ? 'bg-market-up' : 'bg-market-down')}
+                      style={{ width: `${Math.min(100, row.winRate)}%` }}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </Panel>
+        </Reveal>
+      </div>
+
+      <div className="grid lg:grid-cols-2 gap-4">
+        <Reveal>
+          <Panel>
+            <PanelHeader title="P&L Distribution" hint="Trade outcomes bucketed worst → best" />
+            <div className="h-56 px-3 py-3">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={dist} margin={{ top: 8, right: 12, bottom: 0, left: 4 }}>
+                  <XAxis dataKey="mid" tickLine={false} axisLine={false} tickFormatter={(v) => fmtCompact(v)} />
+                  <YAxis tickLine={false} axisLine={false} width={34} allowDecimals={false} />
+                  <Tooltip
+                    formatter={(v) => [`${v} trades`, 'Count']}
+                    labelFormatter={(v) => `~${fmtSignedMoney(v, 0)}`}
+                    cursor={{ fill: 'rgba(255,255,255,0.03)' }}
+                  />
+                  <Bar dataKey="count" radius={[3, 3, 0, 0]}>
+                    {dist.map((b, i) => (
+                      <Cell key={i} fill={b.win ? '#19C784' : '#EF4353'} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </Panel>
+        </Reveal>
+
+        <Reveal delay={0.06}>
+          <Panel>
+            <PanelHeader title="Rolling Win Rate" hint="10-trade trailing window" />
+            <div className="h-56 px-3 py-3">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={rollWR} margin={{ top: 8, right: 12, bottom: 0, left: 4 }}>
+                  <XAxis dataKey="n" tickLine={false} axisLine={false} minTickGap={28} tickFormatter={(v) => `#${v}`} />
+                  <YAxis tickLine={false} axisLine={false} width={40} domain={[0, 100]} tickFormatter={(v) => `${v}%`} />
+                  <Tooltip
+                    formatter={(v) => [`${v.toFixed(0)}%`, 'Win rate']}
+                    labelFormatter={(v) => `Trade #${v}`}
+                  />
+                  <ReferenceLine y={50} stroke="#233049" strokeDasharray="3 3" />
+                  <Line type="monotone" dataKey="winRate" stroke="#4C7EF3" strokeWidth={1.8} dot={false} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          </Panel>
+        </Reveal>
+      </div>
 
       <div className="grid lg:grid-cols-2 gap-4">
         <Reveal>

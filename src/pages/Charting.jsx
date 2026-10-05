@@ -7,7 +7,7 @@ import { createChart, CrosshairMode } from 'lightweight-charts'
 import Reveal from '../components/Reveal.jsx'
 import { Panel, PanelHeader, Stat, SourceBadge, Select, Tag, classNames } from '../components/ui.jsx'
 import { useStore } from '../lib/store.jsx'
-import { getQuote, getCandles, getOrderBook } from '../lib/marketData.js'
+import { getQuote, getCandles, getLiveCandles, getOrderBook } from '../lib/marketData.js'
 import { UNIVERSE } from '../lib/universe.js'
 import { fmtPrice, fmtPct, fmtCompact, upDownClass } from '../lib/format.js'
 
@@ -30,8 +30,42 @@ export default function Charting() {
   const seriesRef = useRef({})
 
   const quote = getQuote(symbol)
-  const candles = useMemo(() => getCandles(symbol, tf), [symbol, tf, Math.floor(marketRev / 1)])
+  const [candles, setCandles] = useState(() => getCandles(symbol, tf))
+  const [candleSrc, setCandleSrc] = useState('sim') // 'live' | 'sim'
   const book = useMemo(() => getOrderBook(symbol, 8), [symbol, marketRev])
+
+  // on symbol / timeframe change: show synthetic instantly, then swap in live OHLC
+  useEffect(() => {
+    let cancelled = false
+    setCandles(getCandles(symbol, tf))
+    setCandleSrc('sim')
+    getLiveCandles(symbol, tf)
+      .then((live) => {
+        if (!cancelled && live && live.length > 3) {
+          setCandles(live)
+          setCandleSrc('live')
+        }
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [symbol, tf])
+
+  // once per market tick, quietly refresh live candles so the chart stays current
+  useEffect(() => {
+    if (candleSrc !== 'live') return
+    let cancelled = false
+    getLiveCandles(symbol, tf)
+      .then((live) => {
+        if (!cancelled && live && live.length > 3) setCandles(live)
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [marketRev])
 
   // chart lifecycle
   useEffect(() => {
@@ -158,7 +192,10 @@ export default function Charting() {
                   {o.label}
                 </button>
               ))}
-              <span className="ml-auto text-3xs text-ink-faint font-mono">{candles.length} bars · {tf}</span>
+              <span className="ml-auto flex items-center gap-2 text-3xs text-ink-faint font-mono">
+                <SourceBadge source={candleSrc} />
+                {candles.length} bars · {tf}
+              </span>
             </div>
             <div ref={containerRef} className="h-[380px] md:h-[480px] w-full" />
           </Panel>

@@ -452,6 +452,55 @@ export function getCandles(sym, tf = '1D', bars = 260) {
 
 const round = (v, d) => Math.round(v * 10 ** d) / 10 ** d
 
+// ── live OHLC candles from Yahoo (same proxy chain) for the chart workstation ──
+const TF_YAHOO = {
+  '5m': { range: '5d', interval: '5m' },
+  '15m': { range: '1mo', interval: '15m' },
+  '1H': { range: '3mo', interval: '60m' },
+  '4H': { range: '1y', interval: '60m' }, // Yahoo has no 4h; hourly is the closest live grain
+  '1D': { range: '2y', interval: '1d' },
+  '1W': { range: '10y', interval: '1wk' },
+}
+
+export async function getLiveCandles(sym, tf = '1D') {
+  const def = bySymbol[sym]
+  if (!def) return null
+  const { range, interval } = TF_YAHOO[tf] ?? TF_YAHOO['1D']
+  const target = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(
+    yahooSymbol(def)
+  )}?range=${range}&interval=${interval}`
+  for (const url of yahooUrls(target)) {
+    const isApi = url.startsWith('/api/yahoo')
+    try {
+      const j = await fetchJson(url, {}, 9000)
+      const r = j?.chart?.result?.[0]
+      if (!r?.timestamp?.length) continue
+      const qd = r.indicators?.quote?.[0]
+      if (!qd) continue
+      const out = []
+      for (let i = 0; i < r.timestamp.length; i++) {
+        const o = qd.open?.[i], h = qd.high?.[i], l = qd.low?.[i], c = qd.close?.[i]
+        if (o == null || c == null || h == null || l == null) continue
+        out.push({
+          time: r.timestamp[i],
+          open: round(o, def.digits),
+          high: round(h, def.digits),
+          low: round(l, def.digits),
+          close: round(c, def.digits),
+          volume: Math.floor(qd.volume?.[i] || 0),
+        })
+      }
+      if (out.length > 3) {
+        if (isApi) apiProxyOk = true
+        return out
+      }
+    } catch {
+      if (isApi) apiProxyOk = false
+    }
+  }
+  return null
+}
+
 // simple order-book synthesis around current price (terminal DOM)
 export function getOrderBook(sym, levels = 12) {
   const q = quotes.get(sym)
