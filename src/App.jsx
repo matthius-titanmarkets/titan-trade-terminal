@@ -1,5 +1,6 @@
 import React from 'react'
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom'
+import { SpeedInsights } from '@vercel/speed-insights/react'
 import { StoreProvider, useStore } from './lib/store.jsx'
 import Shell from './components/Shell.jsx'
 import Login from './pages/Login.jsx'
@@ -79,6 +80,7 @@ export default function App() {
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
+      <SpeedInsights />
     </StoreProvider>
   )
 }
