@@ -87,7 +87,8 @@ export default function Settings() {
               </div>
               <p className="text-2xs text-ink-dim mt-1.5 leading-relaxed">
                 Live by default, no key needed: crypto via CoinGecko/Binance, and indices, equities, FX, commodities &amp; futures via
-                Yahoo Finance. A free Finnhub key adds a higher-reliability real-time source for US equities and the full news wire.
+                Yahoo Finance — served by a bundled yfinance-backed function when deployed (with CORS-proxy fallbacks otherwise). A free
+                Finnhub key adds a higher-reliability real-time source for US equities and the full news wire.
               </p>
             </div>
             <div>

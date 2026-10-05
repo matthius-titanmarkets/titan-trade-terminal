@@ -30,7 +30,11 @@ Every instrument re-syncs on a fixed cadence (default **60 seconds**, configurab
 
 - **LIVE** — real market prints, no API key required:
   - digital assets via CoinGecko (Binance fallback)
-  - **indices, equities, FX, commodities and futures via Yahoo Finance** (v8 chart) — routed through a CORS-proxy chain because browsers can't call Yahoo directly. Real price, open, high/low, volume and intraday history.
+  - **indices, equities, FX, commodities and futures via Yahoo Finance**, served by a bundled **[yfinance](https://github.com/ranaroussi/yfinance)-backed serverless function** (`api/yf.py`) that runs server-side — no CORS issue, and yfinance handles Yahoo's crumb/cookie logic. One batch request refreshes the whole board each minute; the charting page pulls live OHLC per symbol. If the function isn't deployed (e.g. static-only hosting), it falls back to a Node proxy (`api/yahoo.js`) and then public CORS proxies.
+
+### Deploying the live feed (Vercel)
+
+`api/yf.py` + `requirements.txt` (`yfinance`) deploy automatically as a Python serverless function on Vercel (`vercel.json` gives it 60s / 1 GB). No configuration needed — push the repo or drop the folder into Vercel and the live feed (including indices, commodities and futures) comes up on its own. Netlify/Cloudflare: port `api/yf.py` to that platform's Python function convention.
 - **REF** — anchored to real reference data: FX from open.er-api.com daily rates (baseline while Yahoo intraday loads)
 - **SIM** — Titan reference simulation (deterministic walk anchored to the last known live price), used only when a symbol can't be reached
 

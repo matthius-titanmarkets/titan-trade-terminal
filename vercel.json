@@ -1,0 +1,8 @@
+{
+  "functions": {
+    "api/yf.py": {
+      "maxDuration": 60,
+      "memory": 1024
+    }
+  }
+}

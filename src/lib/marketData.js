@@ -240,21 +240,45 @@ async function pullFx() {
   }
 }
 
-// ── Yahoo Finance universal adapter ──
-async function fetchYahoo(ysym) {
+// ── Yahoo Finance universal adapter (yfinance-backed when deployed) ──
+// Endpoint preference per request:
+//   1) /api/yf    — Python serverless function backed by the `yfinance` library
+//                   (github.com/ranaroussi/yfinance). Most robust: it handles
+//                   Yahoo's crumb/cookie/anti-scrape logic server-side.
+//   2) user CORS proxy (Settings) → Yahoo v8 chart
+//   3) /api/yahoo  — Node same-origin passthrough → Yahoo v8 chart
+//   4) built-in public CORS proxies → Yahoo v8 chart
+//   5) a direct attempt
+// Every endpoint returns Yahoo's v8 chart JSON shape, so parsing is uniform.
+let yfProxyOk = null // null = unknown, true = present, false = absent
+let apiProxyOk = null
+
+function liveChartUrls(ysym, range, interval) {
   const target = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(
     ysym
-  )}?range=1d&interval=5m&includePrePost=false`
-  const chain = []
-  if (corsProxy) chain.push((u) => corsProxy.replace('{url}', encodeURIComponent(u)))
-  chain.push(...CORS_PROXIES, (u) => u) // built-in proxies, then a direct attempt
-  for (const wrap of chain) {
+  )}?range=${range}&interval=${interval}&includePrePost=false`
+  const list = []
+  if (yfProxyOk !== false)
+    list.push({ url: `/api/yf?symbol=${encodeURIComponent(ysym)}&range=${range}&interval=${interval}`, yf: true })
+  if (corsProxy) list.push({ url: corsProxy.replace('{url}', encodeURIComponent(target)) })
+  if (apiProxyOk !== false) list.push({ url: `/api/yahoo?url=${encodeURIComponent(target)}`, api: true })
+  for (const p of CORS_PROXIES) list.push({ url: p(target) })
+  list.push({ url: target })
+  return list
+}
+
+// Fetch one symbol's v8 chart result through the best available endpoint.
+async function fetchChart(ysym, range = '1d', interval = '5m') {
+  for (const e of liveChartUrls(ysym, range, interval)) {
     try {
-      const j = await fetchJson(wrap(target), {}, 8000)
+      const j = await fetchJson(e.url, {}, e.yf ? 13000 : 8000)
+      if (e.yf && j?.chart) yfProxyOk = true // the yfinance function is deployed & responding
+      if (e.api && j?.chart) apiProxyOk = true
       const r = j?.chart?.result?.[0]
       if (r?.meta?.regularMarketPrice != null) return r
     } catch {
-      /* try next proxy */
+      if (e.yf) yfProxyOk = false
+      else if (e.api) apiProxyOk = false
     }
   }
   return null
@@ -276,14 +300,55 @@ function applyYahoo(q, r) {
   pushPrice(q, px, 'live')
 }
 
+// One-request batch quote via the yfinance serverless function. Returns a
+// compact { quotes: { <yahooSym>: {price, open, high, low, vol, closes[]} } }.
+async function pullYahooBatch(defs) {
+  const byYahoo = {}
+  for (const d of defs) byYahoo[yahooSymbol(d)] = d.symbol
+  const syms = Object.keys(byYahoo)
+  try {
+    const j = await fetchJson(`/api/yf?symbols=${encodeURIComponent(syms.join(','))}`, {}, 22000)
+    if (!j || !j.quotes) {
+      yfProxyOk = false // responded but not our shape → treat as absent, use fallback
+      return false
+    }
+    yfProxyOk = true
+    let hit = false
+    for (const [ysym, d] of Object.entries(j.quotes)) {
+      const sym = byYahoo[ysym]
+      const q = sym && quotes.get(sym)
+      if (!q || !(d.price > 0)) continue
+      q._anchor = d.price
+      if (d.open != null) q.open = d.open
+      else if (d.closes?.length) q.open = d.closes[0]
+      if (d.high != null) q.dayHigh = d.high
+      if (d.low != null) q.dayLow = d.low
+      if (d.vol != null) q.volume = d.vol
+      if (d.closes?.length > 2) q.history = d.closes.slice(-HISTORY_LEN)
+      pushPrice(q, d.price, 'live')
+      hit = true
+    }
+    return hit
+  } catch {
+    yfProxyOk = false // function not deployed / errored → per-symbol fallback
+    return false
+  }
+}
+
 async function pullYahoo(defs) {
+  // Prefer the single-request yfinance batch when it's available.
+  if (yfProxyOk !== false) {
+    const ok = await pullYahooBatch(defs)
+    if (ok) return true
+  }
+  // Fallback: per-symbol through the endpoint chain (Node proxy / public / direct).
   let hit = false
   const CONC = 6
   for (let i = 0; i < defs.length; i += CONC) {
     const slice = defs.slice(i, i + CONC)
     const results = await Promise.all(
       slice.map(async (def) => {
-        const r = await fetchYahoo(yahooSymbol(def))
+        const r = await fetchChart(yahooSymbol(def), '1d', '5m')
         if (!r) return false
         applyYahoo(quotes.get(def.symbol), r)
         return true
@@ -329,17 +394,23 @@ async function tick() {
   // 2) FX daily reference as a baseline (Yahoo intraday overrides below)
   await pullFx().catch(() => {})
   // 3) Yahoo — real intraday for indices, equities, FX, commodities, futures.
-  //    Priority symbols (tape + watchlist) every tick; the rest rotate.
-  const prio = new Set([...ALWAYS_PRIORITY, ...extraPriority])
+  //    The yfinance batch endpoint returns the whole board in one request, so
+  //    when it is live we refresh everything each tick. On the per-symbol
+  //    fallback (no /api/yf) we fetch the priority board + a rotating window to
+  //    stay cheap and polite.
   const nonCrypto = UNIVERSE.filter((d) => d.cls !== 'crypto')
-  const priorityDefs = nonCrypto.filter((d) => prio.has(d.symbol))
-  const restDefs = nonCrypto.filter((d) => !prio.has(d.symbol))
-  const WINDOW = 14
-  const pages = Math.max(1, Math.ceil(restDefs.length / WINDOW))
-  const start = (rotateOffset % pages) * WINDOW
-  rotateOffset++
-  const restSlice = restDefs.slice(start, start + WINDOW)
-  await pullYahoo([...priorityDefs, ...restSlice]).catch(() => {})
+  if (yfProxyOk === true) {
+    await pullYahoo(nonCrypto).catch(() => {})
+  } else {
+    const prio = new Set([...ALWAYS_PRIORITY, ...extraPriority])
+    const priorityDefs = nonCrypto.filter((d) => prio.has(d.symbol))
+    const restDefs = nonCrypto.filter((d) => !prio.has(d.symbol))
+    const WINDOW = 14
+    const pages = Math.max(1, Math.ceil(restDefs.length / WINDOW))
+    const start = (rotateOffset % pages) * WINDOW
+    rotateOffset++
+    await pullYahoo([...priorityDefs, ...restDefs.slice(start, start + WINDOW)]).catch(() => {})
+  }
   // 4) Finnhub override for US equities when a key is configured
   if (finnhubKey) await pullFinnhub().catch(() => {})
 
@@ -466,39 +537,24 @@ export async function getLiveCandles(sym, tf = '1D') {
   const def = bySymbol[sym]
   if (!def) return null
   const { range, interval } = TF_YAHOO[tf] ?? TF_YAHOO['1D']
-  const target = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(
-    yahooSymbol(def)
-  )}?range=${range}&interval=${interval}`
-  for (const url of yahooUrls(target)) {
-    const isApi = url.startsWith('/api/yahoo')
-    try {
-      const j = await fetchJson(url, {}, 9000)
-      const r = j?.chart?.result?.[0]
-      if (!r?.timestamp?.length) continue
-      const qd = r.indicators?.quote?.[0]
-      if (!qd) continue
-      const out = []
-      for (let i = 0; i < r.timestamp.length; i++) {
-        const o = qd.open?.[i], h = qd.high?.[i], l = qd.low?.[i], c = qd.close?.[i]
-        if (o == null || c == null || h == null || l == null) continue
-        out.push({
-          time: r.timestamp[i],
-          open: round(o, def.digits),
-          high: round(h, def.digits),
-          low: round(l, def.digits),
-          close: round(c, def.digits),
-          volume: Math.floor(qd.volume?.[i] || 0),
-        })
-      }
-      if (out.length > 3) {
-        if (isApi) apiProxyOk = true
-        return out
-      }
-    } catch {
-      if (isApi) apiProxyOk = false
-    }
+  const r = await fetchChart(yahooSymbol(def), range, interval)
+  if (!r?.timestamp?.length) return null
+  const qd = r.indicators?.quote?.[0]
+  if (!qd) return null
+  const out = []
+  for (let i = 0; i < r.timestamp.length; i++) {
+    const o = qd.open?.[i], h = qd.high?.[i], l = qd.low?.[i], c = qd.close?.[i]
+    if (o == null || c == null || h == null || l == null) continue
+    out.push({
+      time: r.timestamp[i],
+      open: round(o, def.digits),
+      high: round(h, def.digits),
+      low: round(l, def.digits),
+      close: round(c, def.digits),
+      volume: Math.floor(qd.volume?.[i] || 0),
+    })
   }
-  return null
+  return out.length > 3 ? out : null
 }
 
 // simple order-book synthesis around current price (terminal DOM)
